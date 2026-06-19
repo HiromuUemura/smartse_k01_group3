@@ -1,7 +1,11 @@
 import { cookies } from "next/headers";
+import ExtractUi from "./extract-ui";
+import { getStoredOpenAiModel, hasOpenAiKey } from "../lib/openai";
 
 export default function Home() {
   const isSignedIn = Boolean(cookies().get("google_access_token")?.value);
+  const hasKey = hasOpenAiKey();
+  const currentModel = getStoredOpenAiModel();
 
   return (
     <main>
@@ -32,12 +36,13 @@ export default function Home() {
 
         <h2>次の開発候補</h2>
         <ul>
-          <li>プリント画像アップロード</li>
-          <li>OpenAI APIによる予定・持ち物・締切の抽出</li>
           <li>登録前の確認画面</li>
           <li>予定ごとの家族共有先選択</li>
+          <li>事前・当日のリマインド設定</li>
         </ul>
       </section>
+
+      <ExtractUi hasKey={hasKey} currentModel={currentModel} />
     </main>
   );
 }
