@@ -12,6 +12,7 @@ export default function ExtractUi({ hasKey, currentModel }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<unknown>(null);
   const [usedModel, setUsedModel] = useState<string | null>(null);
+  const [useMock, setUseMock] = useState(true);
 
   async function onExtract(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -21,13 +22,21 @@ export default function ExtractUi({ hasKey, currentModel }: Props) {
 
     const form = event.currentTarget;
     const fileInput = form.elements.namedItem("image") as HTMLInputElement;
-    if (!fileInput?.files?.length) {
-      setError("画像を選択してください。");
-      return;
-    }
 
     const body = new FormData();
-    body.append("image", fileInput.files[0]);
+    if (useMock) {
+      body.append("mock", "true");
+      // ダミーモードでは画像は任意（あれば結果にファイル名を反映）。
+      if (fileInput?.files?.length) {
+        body.append("image", fileInput.files[0]);
+      }
+    } else {
+      if (!fileInput?.files?.length) {
+        setError("画像を選択してください。");
+        return;
+      }
+      body.append("image", fileInput.files[0]);
+    }
 
     setLoading(true);
     try {
@@ -92,7 +101,21 @@ export default function ExtractUi({ hasKey, currentModel }: Props) {
             {loading ? "抽出中..." : "抽出する"}
           </button>
         </div>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 12 }}>
+          <input
+            type="checkbox"
+            checked={useMock}
+            onChange={(e) => setUseMock(e.target.checked)}
+          />
+          ダミーで実行（LLMを使わない・APIキー不要）
+        </label>
       </form>
+      {useMock ? (
+        <p style={{ fontSize: "0.85rem", color: "#5f6368" }}>
+          ※ ダミーモードでは画像内容は解析せず固定のサンプル結果を返します。
+          画像は任意（指定するとファイル名のみ結果に反映）。
+        </p>
+      ) : null}
 
       {error ? <p style={{ color: "#c5221f" }}>エラー: {error}</p> : null}
 
