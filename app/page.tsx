@@ -12,19 +12,14 @@ export default function Home() {
       <section className="card">
         <h1>OCR Schedule Assistant</h1>
         <p>
-          学校プリントなどの画像を読み取り、予定候補をGoogleカレンダーに登録するアプリです。
-          現時点では、Google OAuthログインとテスト予定登録だけを確認します。
+          学校のプリントやメール画像から予定を読み取り、必要な参加者を付けて Google カレンダーに登録するアプリです。
+          まずは Google OAuth ログインと OCR 抽出の流れを確認できます。
         </p>
 
         <div className="actions">
           <a className="button" href="/api/auth/google">
             Googleでログイン
           </a>
-          <form action="/api/calendar/create-event" method="post">
-            <button className="button secondary" type="submit">
-              テスト予定を作成
-            </button>
-          </form>
           <a className="button secondary" href="/api/auth/logout">
             ログアウト
           </a>
@@ -34,15 +29,15 @@ export default function Home() {
           ログイン状態: <strong>{isSignedIn ? "ログイン済み" : "未ログイン"}</strong>
         </p>
 
-        <h2>次の開発候補</h2>
+        <h2>今後の流れ</h2>
         <ul>
-          <li>登録前の確認画面</li>
-          <li>予定ごとの家族共有先選択</li>
-          <li>事前・当日のリマインド設定</li>
+          <li>OCR で予定候補を抽出</li>
+          <li>不足項目があればユーザーに確認</li>
+          <li>必要な参加者を付けて Google カレンダーに登録</li>
         </ul>
       </section>
 
-      <ExtractUi hasKey={hasKey} currentModel={currentModel} />
+      <ExtractUi hasKey={hasKey} currentModel={currentModel} isSignedIn={isSignedIn} />
     </main>
   );
 }

@@ -67,7 +67,8 @@ const EXTRACTION_JSON_SCHEMA = {
             deadline: { type: ["string", "null"] },
             notes: { type: ["string", "null"] },
             missingFields: { type: "array", items: { type: "string" } },
-            confidence: { type: ["number", "null"] }
+            confidence: { type: ["number", "null"] },
+            audience: { type: "string", enum: ["parent", "family"] }
           },
           required: [
             "title",
@@ -79,7 +80,8 @@ const EXTRACTION_JSON_SCHEMA = {
             "deadline",
             "notes",
             "missingFields",
-            "confidence"
+            "confidence",
+            "audience"
           ]
         }
       },

@@ -1,30 +1,95 @@
-import { NextResponse } from "next/server";
-import { getFamilyAttendees, getRequiredEnv, getValidAccessToken } from "../../../../lib/google";
+import { NextRequest, NextResponse } from "next/server";
+import {
+  getValidAccessToken,
+  resolveAttendeeEmailsForAudience
+} from "../../../../lib/google";
+import type { ScheduleAudience, ScheduleCandidate } from "../../../../lib/types";
 
-export async function POST() {
+type CalendarRequestBody = {
+  candidate?: ScheduleCandidate;
+  schedule?: ScheduleCandidate;
+};
+
+function addOneDay(date: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day));
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
+}
+
+function addMinutesToTime(time: string, minutes: number): string {
+  const [hours, mins] = time.split(":").map(Number);
+  const totalMinutes = hours * 60 + mins + minutes;
+  const wrapped = ((totalMinutes % 1440) + 1440) % 1440;
+  const nextHours = Math.floor(wrapped / 60).toString().padStart(2, "0");
+  const nextMinutes = (wrapped % 60).toString().padStart(2, "0");
+  return `${nextHours}:${nextMinutes}`;
+}
+
+function buildAttendees(audience: ScheduleAudience, attendees?: string[]): Array<{ email: string }> {
+  const emails =
+    attendees && attendees.length > 0 ? attendees : resolveAttendeeEmailsForAudience(audience);
+  return emails.map((email) => ({ email }));
+}
+
+function buildCalendarEvent(candidate: ScheduleCandidate) {
+  if (!candidate.date) {
+    throw new Error("The extracted schedule is missing a date.");
+  }
+
+  const summary = candidate.title.trim() || "OCR Schedule";
+  const descriptionParts = [
+    "Imported from OCR Schedule Assistant.",
+    candidate.notes ? `Notes: ${candidate.notes}` : null,
+    candidate.items.length ? `Items: ${candidate.items.join(", ")}` : null,
+    `Audience: ${candidate.audience}`
+  ].filter(Boolean);
+
+  const event: Record<string, unknown> = {
+    summary,
+    description: descriptionParts.join("\n")
+  };
+
+  if (candidate.startTime) {
+    const endTime = candidate.endTime ?? addMinutesToTime(candidate.startTime, 60);
+    event.start = {
+      dateTime: `${candidate.date}T${candidate.startTime}:00`,
+      timeZone: "Asia/Tokyo"
+    };
+    event.end = {
+      dateTime: `${candidate.date}T${endTime}:00`,
+      timeZone: "Asia/Tokyo"
+    };
+  } else {
+    event.start = { date: candidate.date };
+    event.end = { date: addOneDay(candidate.date) };
+  }
+
+  return event;
+}
+
+export async function POST(request: NextRequest) {
   const response = NextResponse.json({ ok: true });
 
   try {
     const accessToken = await getValidAccessToken(response);
     const calendarId = process.env.GOOGLE_CALENDAR_ID || "primary";
+    const body = (await request.json()) as CalendarRequestBody;
+    const candidate = body.candidate ?? body.schedule;
 
-    const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    start.setHours(10, 0, 0, 0);
-    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    if (!candidate) {
+      return NextResponse.json({ error: "Missing schedule data." }, { status: 400 });
+    }
 
-    const event = {
-      summary: "APIテスト予定",
-      description: "OCR Schedule Assistantから登録したテスト予定です。",
-      start: {
-        dateTime: start.toISOString(),
-        timeZone: "Asia/Tokyo"
-      },
-      end: {
-        dateTime: end.toISOString(),
-        timeZone: "Asia/Tokyo"
-      },
-      attendees: getFamilyAttendees()
-    };
+    if (!candidate.audience) {
+      candidate.audience = "family";
+    }
+
+    const event = buildCalendarEvent(candidate);
+    const attendees = buildAttendees(candidate.audience, candidate.attendees);
+    if (attendees.length > 0) {
+      event.attendees = attendees;
+    }
 
     const calendarResponse = await fetch(
       `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?sendUpdates=all`,
@@ -48,7 +113,7 @@ export async function POST() {
 
     const createdEvent = await calendarResponse.json();
     return NextResponse.json({
-      message: "Googleカレンダーにテスト予定を作成しました。",
+      message: "Google Calendar に予定を登録しました。",
       eventId: createdEvent.id,
       htmlLink: createdEvent.htmlLink
     });
@@ -62,10 +127,12 @@ export async function POST() {
 
 export async function GET() {
   return NextResponse.json({
-    message: "Use POST /api/calendar/create-event after signing in with Google.",
+    message: "POST a schedule candidate to create a calendar event.",
     requiredEnv: [
-      getRequiredEnv("GOOGLE_CLIENT_ID") ? "GOOGLE_CLIENT_ID" : "",
-      getRequiredEnv("GOOGLE_CLIENT_SECRET") ? "GOOGLE_CLIENT_SECRET" : ""
+      process.env.GOOGLE_CLIENT_ID ? "GOOGLE_CLIENT_ID" : "",
+      process.env.GOOGLE_CLIENT_SECRET ? "GOOGLE_CLIENT_SECRET" : "",
+      process.env.PARENT_ATTENDEES ? "PARENT_ATTENDEES" : "",
+      process.env.FAMILY_ATTENDEES ? "FAMILY_ATTENDEES" : ""
     ].filter(Boolean)
   });
 }

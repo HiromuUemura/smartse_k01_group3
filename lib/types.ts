@@ -19,6 +19,8 @@ export type ScheduleField =
  * 値が読み取れない/曖昧な場合は null（または空配列）とし、
  * 確認が必要な項目を missingFields に列挙する。
  */
+export type ScheduleAudience = "parent" | "family";
+
 export interface ScheduleCandidate {
   /** 予定タイトル（例: 「6月 授業参観」）。 */
   title: string;
@@ -43,6 +45,8 @@ export interface ScheduleCandidate {
   missingFields: ScheduleField[];
   /** モデルの自己申告の確信度 0.0〜1.0（任意）。 */
   confidence?: number;
+  audience: ScheduleAudience;
+  attendees?: string[];
 }
 
 /** AI抽出API（app/api/extract）のレスポンス。 */
@@ -79,6 +83,7 @@ export interface ConfirmedSchedule {
   deadline: string | null;
   notes: string | null;
   /** 共有する家族などのメールアドレス。issue #10, #11。 */
+  audience: ScheduleAudience;
   attendees: string[];
   /** 通知設定。issue #12, #13。 */
   reminders: ReminderSetting[];
