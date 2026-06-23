@@ -12,6 +12,9 @@ export const EXTRACTION_SYSTEM_PROMPT = `あなたは学校プリント・連絡
 - 時刻は HH:mm（24時間表記）。
 - 持ち物は items に文字列の配列で入れる。
 - 値を創作しない。画像に書かれていないことは null にする。
+- 予定ごとに、それが「親だけ向け(parent)」か「家族全員向け(family)」かを必ず判定して audience に入れる。
+- parent は、保護者だけに関係する予定（保護者会、面談、提出期限など）に使う。
+- family は、子どもも含めた家族全員に関係する予定（授業参観、運動会、家族で参加する行事など）に使う。
 - 出力は指定された JSON スキーマに厳密に従う。`;
 
 export const EXTRACTION_USER_PROMPT =

@@ -1,6 +1,6 @@
 # OCR Schedule Assistant
 
-学校プリント画像などを読み取り、予定候補をGoogleカレンダーに登録するアプリ。
+学校のお便りやメール画像から予定を抽出し、必要な参加者を付けて Google カレンダーに登録する Next.js アプリです。
 
 ## 技術スタック
 
@@ -8,6 +8,13 @@
 - TypeScript
 - Google OAuth 2.0
 - Google Calendar API
+
+## できること
+
+- 画像から予定候補を抽出
+- `parent` / `family` を画像内容から判定
+- 判定結果に応じて参加者を自動付与
+- 抽出結果をそのまま Google カレンダーに追加
 
 ## Google Cloud Console の前提設定
 
@@ -40,7 +47,10 @@ GOOGLE_CLIENT_ID=xxxxx.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=GOCSPX-xxxxx
 GOOGLE_REDIRECT_URI=http://localhost:3000/api/auth/callback
 GOOGLE_CALENDAR_ID=primary
-FAMILY_ATTENDEES=father@example.com,child@example.com
+PARENT_ATTENDEES=mother@example.com,father@example.com
+FAMILY_ATTENDEES=mother@example.com,father@example.com,child@example.com
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-5-nano
 ```
 
 `GOOGLE_CALENDAR_ID` は通常は `primary` で問題ありません。
@@ -64,9 +74,16 @@ http://localhost:3000/
 2. 研修用Googleアカウントでログインする
 3. Calendar APIへのアクセスを許可する
 4. トップ画面に戻る
-5. `テスト予定を作成` を押す
-6. Googleカレンダーに `APIテスト予定` が登録されているか確認する
-7. `FAMILY_ATTENDEES` を設定している場合、指定したメールに予定招待が届くか確認する
+5. OpenAI API キーを保存
+6. 画像をアップロードして抽出
+7. 抽出結果の `parent` / `family` と参加者を確認
+8. `Googleカレンダーに追加` を押す
+
+## 補足
+
+- `PARENT_ATTENDEES` は親だけ向け予定の参加者メールです
+- `FAMILY_ATTENDEES` は家族全員向け予定の参加者メールです
+- 参加者の出し分けはアプリ側で行うので、Google 側の家族共有カレンダーを必須にはしていません
 
 ## GitHubに上げないもの
 

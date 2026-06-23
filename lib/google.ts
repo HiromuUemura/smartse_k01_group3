@@ -1,13 +1,13 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-export const GOOGLE_SCOPES = [
-  "https://www.googleapis.com/auth/calendar.events"
-];
+export const GOOGLE_SCOPES = ["https://www.googleapis.com/auth/calendar.events"];
 
 const ACCESS_TOKEN_COOKIE = "google_access_token";
 const REFRESH_TOKEN_COOKIE = "google_refresh_token";
 const TOKEN_EXPIRES_AT_COOKIE = "google_token_expires_at";
+const PARENT_ATTENDEES_ENV = "PARENT_ATTENDEES";
+const FAMILY_ATTENDEES_ENV = "FAMILY_ATTENDEES";
 
 export function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -147,11 +147,31 @@ export async function getValidAccessToken(response: NextResponse): Promise<strin
   return refreshed.access_token;
 }
 
-export function getFamilyAttendees(): Array<{ email: string }> {
-  const raw = process.env.FAMILY_ATTENDEES ?? "";
-  return raw
+export function resolveAttendeeEmails(raw: string | undefined): string[] {
+  return (raw ?? "")
     .split(",")
     .map((email) => email.trim())
-    .filter(Boolean)
-    .map((email) => ({ email }));
+    .filter(Boolean);
+}
+
+export function resolveAttendeesForAudience(audience: "parent" | "family"): Array<{ email: string }> {
+  const primaryEnv = audience === "parent" ? PARENT_ATTENDEES_ENV : FAMILY_ATTENDEES_ENV;
+  const fallbackEnv = audience === "parent" ? FAMILY_ATTENDEES_ENV : PARENT_ATTENDEES_ENV;
+  const emails = resolveAttendeeEmails(process.env[primaryEnv]);
+  const fallbackEmails = resolveAttendeeEmails(process.env[fallbackEnv]);
+  const finalEmails = emails.length > 0 ? emails : fallbackEmails;
+
+  return finalEmails.map((email) => ({ email }));
+}
+
+export function resolveAttendeeEmailsForAudience(audience: "parent" | "family"): string[] {
+  return resolveAttendeesForAudience(audience).map((attendee) => attendee.email);
+}
+
+export function getFamilyAttendees(): Array<{ email: string }> {
+  return resolveAttendeesForAudience("family");
+}
+
+export function getParentAttendees(): Array<{ email: string }> {
+  return resolveAttendeesForAudience("parent");
 }

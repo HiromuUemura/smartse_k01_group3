@@ -10,6 +10,19 @@ import { getMockExtractionResult } from "../../../lib/mock";
 // multipart/form-data の "image" フィールドで画像を受け取り、ExtractionResult を返す。
 // "mock" フィールドが "true" の場合は、LLMを使わずダミー結果を返す（疎通確認用）。
 
+import { resolveAttendeeEmailsForAudience } from "../../../lib/google";
+import type { ExtractionResult } from "../../../lib/types";
+
+function enrichExtractionResult(result: ExtractionResult): ExtractionResult {
+  return {
+    ...result,
+    candidates: result.candidates.map((candidate) => ({
+      ...candidate,
+      attendees: resolveAttendeeEmailsForAudience(candidate.audience)
+    }))
+  };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -19,7 +32,10 @@ export async function POST(request: NextRequest) {
     // ダミーモード: APIキー・画像なしでも動かせる（パイプライン疎通確認用）。
     if (useMock) {
       const fileName = file instanceof File ? file.name : undefined;
-      return NextResponse.json({ model: "mock", result: getMockExtractionResult(fileName) });
+      return NextResponse.json({
+        model: "mock",
+        result: enrichExtractionResult(getMockExtractionResult(fileName))
+      });
     }
 
     const apiKey = getStoredOpenAiKey();
@@ -39,7 +55,7 @@ export async function POST(request: NextRequest) {
     const dataUrl = `data:${mediaType};base64,${bytes.toString("base64")}`;
 
     const model = getStoredOpenAiModel();
-    const result = await extractScheduleFromImage(dataUrl, apiKey, model);
+    const result = enrichExtractionResult(await extractScheduleFromImage(dataUrl, apiKey, model));
 
     return NextResponse.json({ model, result });
   } catch (error) {

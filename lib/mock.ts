@@ -15,6 +15,7 @@ export function getMockExtractionResult(fileName?: string): ExtractionResult {
         deadline: null,
         notes: `ダミーデータです（LLM未使用）${fileName ? ` / 入力ファイル: ${fileName}` : ""}`,
         missingFields: [],
+        audience: "family",
         confidence: 0.5
       },
       {
@@ -26,7 +27,9 @@ export function getMockExtractionResult(fileName?: string): ExtractionResult {
         items: [],
         deadline: "2026-06-30",
         notes: "ダミーデータです（LLM未使用）。日付・時刻が読み取れない例。",
-        missingFields: ["date", "startTime"]
+        missingFields: ["date", "startTime"],
+        audience: "parent",
+        confidence: 0.35
       }
     ],
     warning: "これはダミー応答です。実際の画像内容は解析していません。"
