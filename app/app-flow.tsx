@@ -119,6 +119,7 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
   const [regError, setRegError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showKeyPanel, setShowKeyPanel] = useState(false);
+  const [zoomSrc, setZoomSrc] = useState<string | null>(null);
   const fileRef = useRef<File | null>(null);
 
   function reset(toScreen: Screen) {
@@ -1207,12 +1208,26 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
                 <div style={{ flex: 1, minWidth: 240, display: "flex", flexDirection: "column", gap: 14 }}>
                   <div style={{ background: "#fff", border: "1px solid #e8eaed", borderRadius: 14, overflow: "hidden", boxShadow: "0 1px 3px rgba(60,64,67,.06)" }}>
                     {fileThumb ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={fileThumb} alt="" style={{ width: "100%", display: "block", maxHeight: 240, objectFit: "cover", objectPosition: "top", background: "#f1f3f4" }} />
+                      <button
+                        type="button"
+                        onClick={() => setZoomSrc(fileThumb)}
+                        title="クリックで拡大"
+                        style={{ display: "block", width: "100%", padding: 0, border: "none", background: "#f1f3f4", cursor: "zoom-in", maxHeight: 360, overflow: "hidden" }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={fileThumb} alt="" style={{ width: "100%", maxHeight: 360, objectFit: "contain", display: "block" }} />
+                      </button>
                     ) : (
                       <div style={{ height: 120, background: "#f1f3f4" }} />
                     )}
-                    <div style={{ padding: "9px 13px", fontSize: 11, color: "#80868b", borderTop: "1px solid #eceef1" }}>読み込んだお便り</div>
+                    <div style={{ padding: "9px 13px", fontSize: 11, color: "#80868b", borderTop: "1px solid #eceef1", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span>読み込んだお便り</span>
+                      {fileThumb ? (
+                        <button type="button" onClick={() => setZoomSrc(fileThumb)} style={{ background: "none", border: "none", color: A, fontSize: 11, fontWeight: 600, cursor: "pointer", padding: 0 }}>
+                          🔍 拡大
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
                     {rows.map((e, i) => {
@@ -1292,12 +1307,27 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
                           <Field label="持ち物">
                             <input value={e.itemsText} onChange={(ev) => updateField(i, "itemsText", ev.target.value)} placeholder="カンマ区切り" style={INP} />
                           </Field>
+                          <Field label="締切（提出など）">
+                            <input type="date" value={e.deadline} onChange={(ev) => updateField(i, "deadline", ev.target.value)} style={INP} />
+                          </Field>
+                          <Field label="繰り返し">
+                            <select value={e.recurrence} onChange={(ev) => updateField(i, "recurrence", ev.target.value as RecurrenceKey)} style={SEL}>
+                              <option value="none">なし</option>
+                              <option value="daily">毎日</option>
+                              <option value="weekly">毎週</option>
+                              <option value="monthly">毎月</option>
+                              <option value="yearly">毎年</option>
+                            </select>
+                          </Field>
                         </div>
                         <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px dashed #e8eaed", display: "flex", flexDirection: "column", gap: 14 }}>
                           <Field label="対象">
                             <AudiencePicker e={e} i={i} />
                           </Field>
                           <NotifyPair e={e} i={i} />
+                          <Field label="備考">
+                            <input value={e.notes} onChange={(ev) => updateField(i, "notes", ev.target.value)} placeholder="備考" style={INP} />
+                          </Field>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
                           <IncludeToggle e={e} i={i} />
@@ -1498,6 +1528,29 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
           </div>
         ) : null}
       </main>
+
+      {/* 画像ライトボックス（全体表示・拡大確認用） */}
+      {zoomSrc ? (
+        <div
+          onClick={() => setZoomSrc(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.82)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, cursor: "zoom-out" }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={zoomSrc}
+            alt=""
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: "92vw", maxHeight: "92vh", objectFit: "contain", borderRadius: 8, boxShadow: "0 10px 40px rgba(0,0,0,.5)", cursor: "default" }}
+          />
+          <button
+            type="button"
+            onClick={() => setZoomSrc(null)}
+            style={{ position: "absolute", top: 18, right: 22, background: "rgba(255,255,255,.92)", border: "none", borderRadius: 999, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", color: "#202124" }}
+          >
+            閉じる ✕
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
