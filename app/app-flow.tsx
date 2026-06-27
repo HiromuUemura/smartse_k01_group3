@@ -557,9 +557,9 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
           </div>
         ) : null}
 
-        <div style={{ marginLeft: "auto", flexShrink: 0 }}>
+        <div style={{ marginLeft: "auto", flexShrink: 0, display: "flex", alignItems: "center", gap: 10, position: "relative" }}>
           {isSignedIn ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <>
               <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 6px 4px 4px", border: "1px solid #e8eaed", borderRadius: 999 }}>
                 <div
                   style={{
@@ -582,6 +582,79 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
               <a href="/api/auth/logout" style={{ color: "#5f6368", fontSize: 12, padding: "6px 8px", borderRadius: 6, textDecoration: "none" }}>
                 ログアウト
               </a>
+            </>
+          ) : null}
+
+          {/* 設定（OpenAI APIキー）— 歯車アイコン */}
+          <button
+            type="button"
+            onClick={() => setShowKeyPanel((v) => !v)}
+            title="OpenAI APIキー設定"
+            style={{
+              position: "relative",
+              width: 34,
+              height: 34,
+              borderRadius: "50%",
+              border: "1px solid #e8eaed",
+              background: showKeyPanel ? A + "14" : "#fff",
+              color: showKeyPanel ? A : "#5f6368",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              flexShrink: 0
+            }}
+          >
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.7" />
+              <path
+                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+                stroke="currentColor"
+                strokeWidth="1.4"
+              />
+            </svg>
+            {hasKey ? (
+              <span style={{ position: "absolute", top: 4, right: 4, width: 8, height: 8, borderRadius: "50%", background: GREEN, border: "1.5px solid #fff" }} />
+            ) : null}
+          </button>
+
+          {showKeyPanel ? (
+            <div
+              style={{
+                position: "absolute",
+                top: 46,
+                right: 0,
+                width: 320,
+                background: "#fff",
+                border: "1px solid #e8eaed",
+                borderRadius: 14,
+                boxShadow: "0 10px 30px rgba(60,64,67,.16)",
+                padding: 16,
+                zIndex: 30
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <strong style={{ fontSize: 13.5 }}>OpenAI APIキー</strong>
+                <span style={{ fontSize: 11, fontWeight: 600, color: hasKey ? GREEN : "#9aa0a6" }}>
+                  {hasKey ? `設定済み・${currentModel}` : "未設定"}
+                </span>
+              </div>
+              <p style={{ margin: "0 0 12px", fontSize: 11.5, color: "#80868b", lineHeight: 1.6 }}>
+                実際のLLMで抽出する場合に使用します（ダミー実行は不要）。
+              </p>
+              <form action="/api/settings/openai-key" method="post" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <input type="password" name="apiKey" placeholder="sk-..." autoComplete="off" style={INP} />
+                <select name="model" defaultValue={currentModel} style={SEL}>
+                  <option value="gpt-5-nano">gpt-5-nano（低コスト）</option>
+                  <option value="gpt-5-mini">gpt-5-mini（やや高精度）</option>
+                </select>
+                <button type="submit" style={{ ...primaryBtn, padding: "9px 16px", fontSize: 13 }}>
+                  キーを保存
+                </button>
+              </form>
+              <p style={{ margin: "10px 0 0", fontSize: 10.5, color: "#9aa0a6", lineHeight: 1.6 }}>
+                ※ サーバ側のhttpOnly Cookieに保存され、OpenAI呼び出しにのみ使用します。
+              </p>
             </div>
           ) : null}
         </div>
@@ -828,32 +901,6 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
               </p>
             ) : null}
             {error ? <p style={{ color: "#c5221f", fontSize: 13, marginTop: 12 }}>エラー: {error}</p> : null}
-
-            {/* 控えめなAPIキー設定 */}
-            <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px dashed #e8eaed" }}>
-              <button
-                type="button"
-                onClick={() => setShowKeyPanel((v) => !v)}
-                style={{ background: "none", border: "none", color: "#80868b", fontSize: 12, cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: 6 }}
-              >
-                ⚙ OpenAI APIキー設定（実抽出用）— 現在: {hasKey ? `設定済み・${currentModel}` : "未設定"}
-              </button>
-              {showKeyPanel ? (
-                <form action="/api/settings/openai-key" method="post" style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8, maxWidth: 460 }}>
-                  <input type="password" name="apiKey" placeholder="sk-..." autoComplete="off" style={INP} />
-                  <select name="model" defaultValue={currentModel} style={SEL}>
-                    <option value="gpt-5-nano">gpt-5-nano（低コスト）</option>
-                    <option value="gpt-5-mini">gpt-5-mini（やや高精度）</option>
-                  </select>
-                  <button type="submit" style={{ ...ghostBtn, alignSelf: "flex-start" }}>
-                    キーを保存
-                  </button>
-                  <span style={{ fontSize: 11, color: "#9aa0a6" }}>
-                    ※ キーはサーバ側のhttpOnly Cookieに保存され、OpenAI呼び出しにのみ使用します。
-                  </span>
-                </form>
-              ) : null}
-            </div>
           </div>
         ) : null}
 
