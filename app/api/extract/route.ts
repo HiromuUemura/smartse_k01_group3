@@ -32,9 +32,10 @@ export async function POST(request: NextRequest) {
     // ダミーモード: APIキー・画像なしでも動かせる（パイプライン疎通確認用）。
     if (useMock) {
       const fileName = file instanceof File ? file.name : undefined;
+      const sample = String(formData.get("sample") ?? "") || undefined;
       return NextResponse.json({
         model: "mock",
-        result: enrichExtractionResult(getMockExtractionResult(fileName))
+        result: enrichExtractionResult(getMockExtractionResult(sample, fileName))
       });
     }
 
