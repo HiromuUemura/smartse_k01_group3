@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import type { ExtractionResult, ScheduleCandidate } from "../lib/types";
+import type {
+  ExtractionResult,
+  ReminderSetting,
+  ScheduleAudience,
+  ScheduleCandidate,
+  ScheduleField
+} from "../lib/types";
 
 type Props = {
   hasKey: boolean;
@@ -9,21 +15,102 @@ type Props = {
   isSignedIn: boolean;
 };
 
+type RecurrenceKey = "none" | "daily" | "weekly" | "monthly" | "yearly";
+
+// 確認・編集UI用の状態。抽出結果を編集可能な形に持つ（issue #4 / #5 / #6）。
+type EditState = {
+  title: string;
+  date: string;
+  allDay: boolean;
+  startTime: string;
+  endTime: string;
+  location: string;
+  itemsText: string;
+  deadline: string;
+  notes: string;
+  audience: ScheduleAudience;
+  attendeesText: string;
+  missingFields: ScheduleField[];
+  // 通知（issue #12 / #13）。-1 = なし。分単位。
+  notify1: number;
+  notify2: number;
+  recurrence: RecurrenceKey;
+};
+
+// 通知プルダウンの選択肢（Google カレンダー準拠）。値は「予定の何分前か」。-1 はなし。
+const NOTIFY_OPTIONS: Array<{ label: string; value: number }> = [
+  { label: "なし", value: -1 },
+  { label: "イベントの予定時刻", value: 0 },
+  { label: "5分前", value: 5 },
+  { label: "10分前", value: 10 },
+  { label: "15分前", value: 15 },
+  { label: "30分前", value: 30 },
+  { label: "1時間前", value: 60 },
+  { label: "2時間前", value: 120 },
+  { label: "1日前", value: 1440 },
+  { label: "2日前", value: 2880 },
+  { label: "1週間前", value: 10080 }
+];
+
+const RECURRENCE_OPTIONS: Array<{ label: string; value: RecurrenceKey }> = [
+  { label: "なし", value: "none" },
+  { label: "毎日", value: "daily" },
+  { label: "毎週", value: "weekly" },
+  { label: "毎月", value: "monthly" },
+  { label: "毎年", value: "yearly" }
+];
+
+const FIELD_LABELS: Record<ScheduleField, string> = {
+  title: "タイトル",
+  date: "日付",
+  startTime: "開始時刻",
+  endTime: "終了時刻",
+  location: "場所",
+  items: "持ち物",
+  deadline: "締切"
+};
+
+function toEditState(c: ScheduleCandidate): EditState {
+  return {
+    title: c.title ?? "",
+    date: c.date ?? "",
+    allDay: !c.startTime,
+    startTime: c.startTime ?? "",
+    endTime: c.endTime ?? "",
+    location: c.location ?? "",
+    itemsText: c.items.join(", "),
+    deadline: c.deadline ?? "",
+    notes: c.notes ?? "",
+    audience: c.audience ?? "family",
+    attendeesText: (c.attendees ?? []).join(", "),
+    missingFields: c.missingFields ?? [],
+    notify1: 1440, // 既定: 1日前
+    notify2: -1, // 既定: なし
+    recurrence: "none"
+  };
+}
+
 export default function ExtractUi({ hasKey, currentModel, isSignedIn }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<ExtractionResult | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [usedModel, setUsedModel] = useState<string | null>(null);
+  const [edits, setEdits] = useState<EditState[] | null>(null);
   const [calendarMessage, setCalendarMessage] = useState<string | null>(null);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [creatingIndex, setCreatingIndex] = useState<number | null>(null);
   const [useMock, setUseMock] = useState(true);
 
+  function updateEdit(index: number, patch: Partial<EditState>) {
+    setEdits((prev) => (prev ? prev.map((e, i) => (i === index ? { ...e, ...patch } : e)) : prev));
+  }
+
   async function onExtract(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
-    setResult(null);
+    setWarning(null);
     setUsedModel(null);
+    setEdits(null);
     setCalendarMessage(null);
     setCalendarError(null);
 
@@ -33,7 +120,6 @@ export default function ExtractUi({ hasKey, currentModel, isSignedIn }: Props) {
     const body = new FormData();
     if (useMock) {
       body.append("mock", "true");
-      // ダミーモードでは画像は任意（あれば結果にファイル名を反映）。
       if (fileInput?.files?.length) {
         body.append("image", fileInput.files[0]);
       }
@@ -53,8 +139,10 @@ export default function ExtractUi({ hasKey, currentModel, isSignedIn }: Props) {
         setError(data?.error ?? "抽出に失敗しました。");
         return;
       }
-      setResult(data.result);
+      const result = data.result as ExtractionResult;
       setUsedModel(data.model ?? null);
+      setWarning(result.warning ?? null);
+      setEdits(result.candidates.map(toEditState));
     } catch (err) {
       setError(err instanceof Error ? err.message : "通信エラーが発生しました。");
     } finally {
@@ -62,25 +150,61 @@ export default function ExtractUi({ hasKey, currentModel, isSignedIn }: Props) {
     }
   }
 
-  async function onCreateEvent(candidate: ScheduleCandidate, index: number) {
+  async function onCreateEvent(index: number) {
+    const e = edits?.[index];
+    if (!e) return;
+
     setCalendarMessage(null);
     setCalendarError(null);
-    setCreatingIndex(index);
 
+    if (!e.date) {
+      setCalendarError("日付を入力してください（カレンダー登録には日付が必須です）。");
+      return;
+    }
+
+    const candidate: ScheduleCandidate = {
+      title: e.title.trim() || "予定",
+      date: e.date,
+      startTime: e.allDay ? null : e.startTime || null,
+      endTime: e.allDay ? null : e.endTime || null,
+      location: e.location.trim() || null,
+      items: e.itemsText
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+      deadline: e.deadline || null,
+      notes: e.notes.trim() || null,
+      missingFields: [],
+      audience: e.audience,
+      // 手動で指定があれば優先。空ならサーバが対象(parent/family)から自動付与。
+      attendees: e.attendeesText
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    };
+
+    // 通知＋予備の通知をまとめる（なし/重複は除外）。
+    const minutes = [e.notify1, e.notify2].filter((m) => m >= 0);
+    const reminders: ReminderSetting[] = Array.from(new Set(minutes)).map((m) => ({
+      method: "popup",
+      minutesBefore: m
+    }));
+
+    setCreatingIndex(index);
     try {
       const response = await fetch("/api/calendar/create-event", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ candidate })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidate,
+          reminders,
+          recurrence: e.recurrence === "none" ? undefined : e.recurrence
+        })
       });
       const data = (await response.json()) as { message?: string; htmlLink?: string; error?: string };
-
       if (!response.ok) {
         throw new Error(data.error ?? "Google カレンダーへの登録に失敗しました。");
       }
-
       setCalendarMessage(
         data.htmlLink
           ? `${data.message ?? "Google カレンダーに登録しました。"} ${data.htmlLink}`
@@ -91,6 +215,42 @@ export default function ExtractUi({ hasKey, currentModel, isSignedIn }: Props) {
     } finally {
       setCreatingIndex(null);
     }
+  }
+
+  const inputStyle: React.CSSProperties = {
+    padding: 8,
+    borderRadius: 8,
+    border: "1px solid #dadce0",
+    width: "100%",
+    boxSizing: "border-box"
+  };
+
+  function fieldLabel(e: EditState, field: ScheduleField) {
+    const needsCheck = e.missingFields.includes(field);
+    return (
+      <span>
+        {FIELD_LABELS[field]}
+        {needsCheck ? (
+          <span style={{ color: "#c5221f", fontSize: "0.75rem", marginLeft: 6 }}>要確認</span>
+        ) : null}
+      </span>
+    );
+  }
+
+  function notifySelect(index: number, key: "notify1" | "notify2", value: number) {
+    return (
+      <select
+        style={inputStyle}
+        value={value}
+        onChange={(ev) => updateEdit(index, { [key]: Number(ev.target.value) } as Partial<EditState>)}
+      >
+        {NOTIFY_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    );
   }
 
   return (
@@ -140,11 +300,7 @@ export default function ExtractUi({ hasKey, currentModel, isSignedIn }: Props) {
           </button>
         </div>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 12 }}>
-          <input
-            type="checkbox"
-            checked={useMock}
-            onChange={(e) => setUseMock(e.target.checked)}
-          />
+          <input type="checkbox" checked={useMock} onChange={(e) => setUseMock(e.target.checked)} />
           ダミーで実行（LLMを使わない・APIキー不要）
         </label>
       </form>
@@ -157,48 +313,124 @@ export default function ExtractUi({ hasKey, currentModel, isSignedIn }: Props) {
 
       {error ? <p style={{ color: "#c5221f" }}>エラー: {error}</p> : null}
 
-      {result ? (
+      {/* 抽出結果の確認・編集 → カレンダー登録 */}
+      {edits ? (
         <div>
-          <h3>抽出結果{usedModel ? ` (${usedModel})` : ""}</h3>
-          {result.warning ? <p style={{ color: "#a15c00" }}>注意: {result.warning}</p> : null}
+          <h3>3. 内容を確認・修正して登録{usedModel ? ` (${usedModel})` : ""}</h3>
+          {warning ? <p style={{ color: "#a15c00" }}>注意: {warning}</p> : null}
+          {!isSignedIn ? (
+            <p style={{ color: "#a15c00" }}>※ カレンダー登録には「Googleでログイン」が必要です。</p>
+          ) : null}
+
           <div style={{ display: "grid", gap: 16 }}>
-            {result.candidates.map((candidate, index) => (
+            {edits.map((e, index) => (
               <article
-                key={`${candidate.title}-${index}`}
-                style={{
-                  border: "1px solid #dadce0",
-                  borderRadius: 12,
-                  padding: 16,
-                  background: "#fff"
-                }}
+                key={index}
+                style={{ border: "1px solid #dadce0", borderRadius: 12, padding: 16, background: "#fff" }}
               >
-                <h4 style={{ marginTop: 0 }}>{candidate.title}</h4>
-                <dl style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "8px 12px" }}>
-                  <dt>日付</dt>
-                  <dd>{candidate.date ?? "未確定"}</dd>
-                  <dt>時間</dt>
-                  <dd>
-                    {candidate.startTime && candidate.endTime
-                      ? `${candidate.startTime} - ${candidate.endTime}`
-                      : "未確定"}
-                  </dd>
-                  <dt>場所</dt>
-                  <dd>{candidate.location ?? "なし"}</dd>
-                  <dt>対象</dt>
-                  <dd>{candidate.audience === "family" ? "family" : "parent"}</dd>
-                  <dt>参加者</dt>
-                  <dd>{candidate.attendees?.length ? candidate.attendees.join(", ") : "未設定"}</dd>
-                  <dt>持ち物</dt>
-                  <dd>{candidate.items.length ? candidate.items.join(", ") : "なし"}</dd>
-                  <dt>不足項目</dt>
-                  <dd>{candidate.missingFields.length ? candidate.missingFields.join(", ") : "なし"}</dd>
-                </dl>
+                {e.missingFields.length ? (
+                  <p
+                    style={{
+                      margin: "0 0 12px",
+                      padding: "8px 12px",
+                      background: "#fce8e6",
+                      color: "#c5221f",
+                      borderRadius: 8,
+                      fontSize: "0.9rem"
+                    }}
+                  >
+                    確認が必要な項目: {e.missingFields.map((f) => FIELD_LABELS[f]).join("、")}
+                    （AIが読み取れなかった項目です。入力してください）
+                  </p>
+                ) : null}
+
+                <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "10px 12px", alignItems: "center" }}>
+                  <label>{fieldLabel(e, "title")}</label>
+                  <input style={inputStyle} value={e.title} onChange={(ev) => updateEdit(index, { title: ev.target.value })} />
+
+                  <label>{fieldLabel(e, "date")}</label>
+                  <input type="date" style={inputStyle} value={e.date} onChange={(ev) => updateEdit(index, { date: ev.target.value })} />
+
+                  <label>終日</label>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={e.allDay}
+                      onChange={(ev) => updateEdit(index, { allDay: ev.target.checked })}
+                    />
+                    終日の予定にする
+                  </label>
+
+                  {!e.allDay ? (
+                    <>
+                      <label>{fieldLabel(e, "startTime")}</label>
+                      <input type="time" style={inputStyle} value={e.startTime} onChange={(ev) => updateEdit(index, { startTime: ev.target.value })} />
+
+                      <label>{fieldLabel(e, "endTime")}</label>
+                      <input type="time" style={inputStyle} value={e.endTime} onChange={(ev) => updateEdit(index, { endTime: ev.target.value })} />
+                    </>
+                  ) : null}
+
+                  <label>{fieldLabel(e, "location")}</label>
+                  <input style={inputStyle} value={e.location} onChange={(ev) => updateEdit(index, { location: ev.target.value })} />
+
+                  <label>{fieldLabel(e, "items")}</label>
+                  <input
+                    style={inputStyle}
+                    placeholder="カンマ区切り（例: 上履き, 筆記用具）"
+                    value={e.itemsText}
+                    onChange={(ev) => updateEdit(index, { itemsText: ev.target.value })}
+                  />
+
+                  <label>{fieldLabel(e, "deadline")}</label>
+                  <input type="date" style={inputStyle} value={e.deadline} onChange={(ev) => updateEdit(index, { deadline: ev.target.value })} />
+
+                  <label>繰り返し</label>
+                  <select
+                    style={inputStyle}
+                    value={e.recurrence}
+                    onChange={(ev) => updateEdit(index, { recurrence: ev.target.value as RecurrenceKey })}
+                  >
+                    {RECURRENCE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  <label>対象</label>
+                  <select
+                    style={inputStyle}
+                    value={e.audience}
+                    onChange={(ev) => updateEdit(index, { audience: ev.target.value as ScheduleAudience })}
+                  >
+                    <option value="parent">parent（保護者のみ）</option>
+                    <option value="family">family（家族全員）</option>
+                  </select>
+
+                  <label>出席者</label>
+                  <input
+                    style={inputStyle}
+                    placeholder="カンマ区切り。空欄なら対象(parent/family)から自動設定"
+                    value={e.attendeesText}
+                    onChange={(ev) => updateEdit(index, { attendeesText: ev.target.value })}
+                  />
+
+                  <label>備考</label>
+                  <input style={inputStyle} value={e.notes} onChange={(ev) => updateEdit(index, { notes: ev.target.value })} />
+
+                  <label>通知</label>
+                  {notifySelect(index, "notify1", e.notify1)}
+
+                  <label>予備の通知</label>
+                  {notifySelect(index, "notify2", e.notify2)}
+                </div>
 
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
                   <button
                     className="button"
                     type="button"
-                    onClick={() => onCreateEvent(candidate, index)}
+                    onClick={() => onCreateEvent(index)}
                     disabled={!isSignedIn || creatingIndex === index}
                   >
                     {creatingIndex === index ? "登録中..." : "Googleカレンダーに追加"}

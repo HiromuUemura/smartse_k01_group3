@@ -3,12 +3,40 @@ import {
   getValidAccessToken,
   resolveAttendeeEmailsForAudience
 } from "../../../../lib/google";
-import type { ScheduleAudience, ScheduleCandidate } from "../../../../lib/types";
+import type { ReminderSetting, ScheduleAudience, ScheduleCandidate } from "../../../../lib/types";
+
+type RecurrenceKey = "daily" | "weekly" | "monthly" | "yearly";
 
 type CalendarRequestBody = {
   candidate?: ScheduleCandidate;
   schedule?: ScheduleCandidate;
+  /** 通知（リマインド）設定。issue #12, #13。 */
+  reminders?: ReminderSetting[];
+  /** 繰り返し設定。プリセットキーを RRULE に変換する。 */
+  recurrence?: RecurrenceKey;
 };
+
+// 繰り返しプリセット → Google Calendar の RRULE。
+const RRULE_MAP: Record<RecurrenceKey, string> = {
+  daily: "RRULE:FREQ=DAILY",
+  weekly: "RRULE:FREQ=WEEKLY",
+  monthly: "RRULE:FREQ=MONTHLY",
+  yearly: "RRULE:FREQ=YEARLY"
+};
+
+// リマインド設定を Google Calendar の reminders 形式に変換する。issue #12, #13。
+function buildReminders(reminders?: ReminderSetting[]): Record<string, unknown> | undefined {
+  if (!Array.isArray(reminders) || reminders.length === 0) {
+    return undefined;
+  }
+  const overrides = reminders
+    .filter((r) => typeof r.minutesBefore === "number" && r.minutesBefore >= 0)
+    .map((r) => ({ method: r.method === "email" ? "email" : "popup", minutes: r.minutesBefore }));
+  if (overrides.length === 0) {
+    return undefined;
+  }
+  return { useDefault: false, overrides };
+}
 
 function addOneDay(date: string): string {
   const [year, month, day] = date.split("-").map(Number);
@@ -72,8 +100,7 @@ export async function POST(request: NextRequest) {
   const response = NextResponse.json({ ok: true });
 
   try {
-    const accessToken = await getValidAccessToken(response);
-    const calendarId = process.env.GOOGLE_CALENDAR_ID || "primary";
+    // 先に入力検証（認証状態に関係なく明確なエラーを返す）。
     const body = (await request.json()) as CalendarRequestBody;
     const candidate = body.candidate ?? body.schedule;
 
@@ -81,14 +108,33 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing schedule data." }, { status: 400 });
     }
 
+    if (!candidate.date) {
+      return NextResponse.json(
+        { error: "日付が未確定です。確認画面で日付を入力してから登録してください。" },
+        { status: 400 }
+      );
+    }
+
     if (!candidate.audience) {
       candidate.audience = "family";
     }
+
+    const accessToken = await getValidAccessToken(response);
+    const calendarId = process.env.GOOGLE_CALENDAR_ID || "primary";
 
     const event = buildCalendarEvent(candidate);
     const attendees = buildAttendees(candidate.audience, candidate.attendees);
     if (attendees.length > 0) {
       event.attendees = attendees;
+    }
+
+    const reminders = buildReminders(body.reminders);
+    if (reminders) {
+      event.reminders = reminders;
+    }
+
+    if (body.recurrence && RRULE_MAP[body.recurrence]) {
+      event.recurrence = [RRULE_MAP[body.recurrence]];
     }
 
     const calendarResponse = await fetch(
