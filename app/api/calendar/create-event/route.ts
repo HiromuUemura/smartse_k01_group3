@@ -5,11 +5,23 @@ import {
 } from "../../../../lib/google";
 import type { ReminderSetting, ScheduleAudience, ScheduleCandidate } from "../../../../lib/types";
 
+type RecurrenceKey = "daily" | "weekly" | "monthly" | "yearly";
+
 type CalendarRequestBody = {
   candidate?: ScheduleCandidate;
   schedule?: ScheduleCandidate;
   /** 通知（リマインド）設定。issue #12, #13。 */
   reminders?: ReminderSetting[];
+  /** 繰り返し設定。プリセットキーを RRULE に変換する。 */
+  recurrence?: RecurrenceKey;
+};
+
+// 繰り返しプリセット → Google Calendar の RRULE。
+const RRULE_MAP: Record<RecurrenceKey, string> = {
+  daily: "RRULE:FREQ=DAILY",
+  weekly: "RRULE:FREQ=WEEKLY",
+  monthly: "RRULE:FREQ=MONTHLY",
+  yearly: "RRULE:FREQ=YEARLY"
 };
 
 // リマインド設定を Google Calendar の reminders 形式に変換する。issue #12, #13。
@@ -119,6 +131,10 @@ export async function POST(request: NextRequest) {
     const reminders = buildReminders(body.reminders);
     if (reminders) {
       event.reminders = reminders;
+    }
+
+    if (body.recurrence && RRULE_MAP[body.recurrence]) {
+      event.recurrence = [RRULE_MAP[body.recurrence]];
     }
 
     const calendarResponse = await fetch(

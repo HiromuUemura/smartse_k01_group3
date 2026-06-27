@@ -15,10 +15,13 @@ type Props = {
   isSignedIn: boolean;
 };
 
+type RecurrenceKey = "none" | "daily" | "weekly" | "monthly" | "yearly";
+
 // 確認・編集UI用の状態。抽出結果を編集可能な形に持つ（issue #4 / #5 / #6）。
 type EditState = {
   title: string;
   date: string;
+  allDay: boolean;
   startTime: string;
   endTime: string;
   location: string;
@@ -26,28 +29,36 @@ type EditState = {
   deadline: string;
   notes: string;
   audience: ScheduleAudience;
+  attendeesText: string;
   missingFields: ScheduleField[];
-  // リマインド（issue #12 事前 / #13 当日）
-  reminderDayBefore: boolean;
-  reminderHourBefore: boolean;
+  // 通知（issue #12 / #13）。-1 = なし。分単位。
+  notify1: number;
+  notify2: number;
+  recurrence: RecurrenceKey;
 };
 
-function toEditState(c: ScheduleCandidate): EditState {
-  return {
-    title: c.title ?? "",
-    date: c.date ?? "",
-    startTime: c.startTime ?? "",
-    endTime: c.endTime ?? "",
-    location: c.location ?? "",
-    itemsText: c.items.join(", "),
-    deadline: c.deadline ?? "",
-    notes: c.notes ?? "",
-    audience: c.audience ?? "family",
-    missingFields: c.missingFields ?? [],
-    reminderDayBefore: true,
-    reminderHourBefore: false
-  };
-}
+// 通知プルダウンの選択肢（Google カレンダー準拠）。値は「予定の何分前か」。-1 はなし。
+const NOTIFY_OPTIONS: Array<{ label: string; value: number }> = [
+  { label: "なし", value: -1 },
+  { label: "イベントの予定時刻", value: 0 },
+  { label: "5分前", value: 5 },
+  { label: "10分前", value: 10 },
+  { label: "15分前", value: 15 },
+  { label: "30分前", value: 30 },
+  { label: "1時間前", value: 60 },
+  { label: "2時間前", value: 120 },
+  { label: "1日前", value: 1440 },
+  { label: "2日前", value: 2880 },
+  { label: "1週間前", value: 10080 }
+];
+
+const RECURRENCE_OPTIONS: Array<{ label: string; value: RecurrenceKey }> = [
+  { label: "なし", value: "none" },
+  { label: "毎日", value: "daily" },
+  { label: "毎週", value: "weekly" },
+  { label: "毎月", value: "monthly" },
+  { label: "毎年", value: "yearly" }
+];
 
 const FIELD_LABELS: Record<ScheduleField, string> = {
   title: "タイトル",
@@ -58,6 +69,26 @@ const FIELD_LABELS: Record<ScheduleField, string> = {
   items: "持ち物",
   deadline: "締切"
 };
+
+function toEditState(c: ScheduleCandidate): EditState {
+  return {
+    title: c.title ?? "",
+    date: c.date ?? "",
+    allDay: !c.startTime,
+    startTime: c.startTime ?? "",
+    endTime: c.endTime ?? "",
+    location: c.location ?? "",
+    itemsText: c.items.join(", "),
+    deadline: c.deadline ?? "",
+    notes: c.notes ?? "",
+    audience: c.audience ?? "family",
+    attendeesText: (c.attendees ?? []).join(", "),
+    missingFields: c.missingFields ?? [],
+    notify1: 1440, // 既定: 1日前
+    notify2: -1, // 既定: なし
+    recurrence: "none"
+  };
+}
 
 export default function ExtractUi({ hasKey, currentModel, isSignedIn }: Props) {
   const [loading, setLoading] = useState(false);
@@ -134,8 +165,8 @@ export default function ExtractUi({ hasKey, currentModel, isSignedIn }: Props) {
     const candidate: ScheduleCandidate = {
       title: e.title.trim() || "予定",
       date: e.date,
-      startTime: e.startTime || null,
-      endTime: e.endTime || null,
+      startTime: e.allDay ? null : e.startTime || null,
+      endTime: e.allDay ? null : e.endTime || null,
       location: e.location.trim() || null,
       items: e.itemsText
         .split(",")
@@ -144,19 +175,31 @@ export default function ExtractUi({ hasKey, currentModel, isSignedIn }: Props) {
       deadline: e.deadline || null,
       notes: e.notes.trim() || null,
       missingFields: [],
-      audience: e.audience
+      audience: e.audience,
+      // 手動で指定があれば優先。空ならサーバが対象(parent/family)から自動付与。
+      attendees: e.attendeesText
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
     };
 
-    const reminders: ReminderSetting[] = [];
-    if (e.reminderDayBefore) reminders.push({ method: "popup", minutesBefore: 1440 });
-    if (e.reminderHourBefore) reminders.push({ method: "popup", minutesBefore: 60 });
+    // 通知＋予備の通知をまとめる（なし/重複は除外）。
+    const minutes = [e.notify1, e.notify2].filter((m) => m >= 0);
+    const reminders: ReminderSetting[] = Array.from(new Set(minutes)).map((m) => ({
+      method: "popup",
+      minutesBefore: m
+    }));
 
     setCreatingIndex(index);
     try {
       const response = await fetch("/api/calendar/create-event", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ candidate, reminders })
+        body: JSON.stringify({
+          candidate,
+          reminders,
+          recurrence: e.recurrence === "none" ? undefined : e.recurrence
+        })
       });
       const data = (await response.json()) as { message?: string; htmlLink?: string; error?: string };
       if (!response.ok) {
@@ -191,6 +234,22 @@ export default function ExtractUi({ hasKey, currentModel, isSignedIn }: Props) {
           <span style={{ color: "#c5221f", fontSize: "0.75rem", marginLeft: 6 }}>要確認</span>
         ) : null}
       </span>
+    );
+  }
+
+  function notifySelect(index: number, key: "notify1" | "notify2", value: number) {
+    return (
+      <select
+        style={inputStyle}
+        value={value}
+        onChange={(ev) => updateEdit(index, { [key]: Number(ev.target.value) } as Partial<EditState>)}
+      >
+        {NOTIFY_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
     );
   }
 
@@ -260,9 +319,7 @@ export default function ExtractUi({ hasKey, currentModel, isSignedIn }: Props) {
           <h3>3. 内容を確認・修正して登録{usedModel ? ` (${usedModel})` : ""}</h3>
           {warning ? <p style={{ color: "#a15c00" }}>注意: {warning}</p> : null}
           {!isSignedIn ? (
-            <p style={{ color: "#a15c00" }}>
-              ※ カレンダー登録には「Googleでログイン」が必要です。
-            </p>
+            <p style={{ color: "#a15c00" }}>※ カレンダー登録には「Googleでログイン」が必要です。</p>
           ) : null}
 
           <div style={{ display: "grid", gap: 16 }}>
@@ -294,11 +351,25 @@ export default function ExtractUi({ hasKey, currentModel, isSignedIn }: Props) {
                   <label>{fieldLabel(e, "date")}</label>
                   <input type="date" style={inputStyle} value={e.date} onChange={(ev) => updateEdit(index, { date: ev.target.value })} />
 
-                  <label>{fieldLabel(e, "startTime")}</label>
-                  <input type="time" style={inputStyle} value={e.startTime} onChange={(ev) => updateEdit(index, { startTime: ev.target.value })} />
+                  <label>終日</label>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={e.allDay}
+                      onChange={(ev) => updateEdit(index, { allDay: ev.target.checked })}
+                    />
+                    終日の予定にする
+                  </label>
 
-                  <label>{fieldLabel(e, "endTime")}</label>
-                  <input type="time" style={inputStyle} value={e.endTime} onChange={(ev) => updateEdit(index, { endTime: ev.target.value })} />
+                  {!e.allDay ? (
+                    <>
+                      <label>{fieldLabel(e, "startTime")}</label>
+                      <input type="time" style={inputStyle} value={e.startTime} onChange={(ev) => updateEdit(index, { startTime: ev.target.value })} />
+
+                      <label>{fieldLabel(e, "endTime")}</label>
+                      <input type="time" style={inputStyle} value={e.endTime} onChange={(ev) => updateEdit(index, { endTime: ev.target.value })} />
+                    </>
+                  ) : null}
 
                   <label>{fieldLabel(e, "location")}</label>
                   <input style={inputStyle} value={e.location} onChange={(ev) => updateEdit(index, { location: ev.target.value })} />
@@ -314,6 +385,19 @@ export default function ExtractUi({ hasKey, currentModel, isSignedIn }: Props) {
                   <label>{fieldLabel(e, "deadline")}</label>
                   <input type="date" style={inputStyle} value={e.deadline} onChange={(ev) => updateEdit(index, { deadline: ev.target.value })} />
 
+                  <label>繰り返し</label>
+                  <select
+                    style={inputStyle}
+                    value={e.recurrence}
+                    onChange={(ev) => updateEdit(index, { recurrence: ev.target.value as RecurrenceKey })}
+                  >
+                    {RECURRENCE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+
                   <label>対象</label>
                   <select
                     style={inputStyle}
@@ -324,30 +408,23 @@ export default function ExtractUi({ hasKey, currentModel, isSignedIn }: Props) {
                     <option value="family">family（家族全員）</option>
                   </select>
 
+                  <label>出席者</label>
+                  <input
+                    style={inputStyle}
+                    placeholder="カンマ区切り。空欄なら対象(parent/family)から自動設定"
+                    value={e.attendeesText}
+                    onChange={(ev) => updateEdit(index, { attendeesText: ev.target.value })}
+                  />
+
                   <label>備考</label>
                   <input style={inputStyle} value={e.notes} onChange={(ev) => updateEdit(index, { notes: ev.target.value })} />
-                </div>
 
-                {/* リマインド設定（issue #12 / #13） */}
-                <fieldset style={{ marginTop: 12, border: "1px solid #e5e7eb", borderRadius: 8, padding: "8px 12px" }}>
-                  <legend style={{ fontSize: "0.85rem", color: "#5f6368" }}>リマインド</legend>
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, marginRight: 16 }}>
-                    <input
-                      type="checkbox"
-                      checked={e.reminderDayBefore}
-                      onChange={(ev) => updateEdit(index, { reminderDayBefore: ev.target.checked })}
-                    />
-                    前日に通知（24時間前）
-                  </label>
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <input
-                      type="checkbox"
-                      checked={e.reminderHourBefore}
-                      onChange={(ev) => updateEdit(index, { reminderHourBefore: ev.target.checked })}
-                    />
-                    当日（1時間前）に通知
-                  </label>
-                </fieldset>
+                  <label>通知</label>
+                  {notifySelect(index, "notify1", e.notify1)}
+
+                  <label>予備の通知</label>
+                  {notifySelect(index, "notify2", e.notify2)}
+                </div>
 
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
                   <button
