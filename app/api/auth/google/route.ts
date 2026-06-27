@@ -2,6 +2,9 @@ import { randomBytes } from "crypto";
 import { NextResponse } from "next/server";
 import { getGoogleAuthUrl } from "../../../../lib/google";
 
+// ビルド時の静的プリレンダリングを無効化（環境変数を参照するため）。
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const state = randomBytes(16).toString("hex");
   const authUrl = getGoogleAuthUrl(state);
