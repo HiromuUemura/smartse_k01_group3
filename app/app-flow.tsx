@@ -33,6 +33,7 @@ type EditState = {
   notify1: number;
   notify2: number;
   recurrence: RecurrenceKey;
+  include: boolean;
 };
 
 type Screen = "login" | "upload" | "extracting" | "confirm" | "done";
@@ -89,9 +90,12 @@ function toEditState(c: ScheduleCandidate): EditState {
     missingFields: c.missingFields ?? [],
     notify1: 1440,
     notify2: 60,
-    recurrence: "none"
+    recurrence: "none",
+    include: true
   };
 }
+
+type RegResult = { eventId?: string; htmlLink?: string };
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -108,6 +112,7 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [expandedIdx, setExpandedIdx] = useState(0);
   const [registered, setRegistered] = useState<number[]>([]);
+  const [results, setResults] = useState<Record<number, RegResult>>({});
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [usedModel, setUsedModel] = useState<string | null>(null);
@@ -123,6 +128,7 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
     fileRef.current = null;
     setEdits(null);
     setRegistered([]);
+    setResults({});
     setError(null);
     setWarning(null);
     setRegError(null);
@@ -228,6 +234,7 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
       setWarning(data.result?.warning ?? null);
       setEdits((data.result?.candidates ?? []).map(toEditState));
       setRegistered([]);
+      setResults({});
       setSelectedIdx(0);
       setExpandedIdx(0);
       setLayout("form");
@@ -239,9 +246,9 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
     }
   }
 
-  async function registerRow(i: number): Promise<boolean> {
+  async function registerRow(i: number): Promise<RegResult> {
     const e = edits?.[i];
-    if (!e || !e.date) return false;
+    if (!e || !e.date) throw new Error("日付がありません。");
     const candidate: ScheduleCandidate = {
       title: e.title.trim() || "予定",
       date: e.date,
@@ -271,18 +278,19 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ candidate, reminders, recurrence: e.recurrence === "none" ? undefined : e.recurrence })
     });
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
       throw new Error(data?.error ?? "登録に失敗しました。");
     }
-    return true;
+    return { eventId: data?.eventId, htmlLink: data?.htmlLink };
   }
 
   async function registerOne(i: number) {
     setRegError(null);
     setBusy(true);
     try {
-      await registerRow(i);
+      const r = await registerRow(i);
+      setResults((prev) => ({ ...prev, [i]: r }));
       setRegistered((prev) => (prev.includes(i) ? prev : [...prev, i]));
     } catch (err) {
       setRegError(err instanceof Error ? err.message : "登録に失敗しました。");
@@ -291,21 +299,60 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
     }
   }
 
+  // 取り消し（Googleカレンダーから削除）。誤登録のリカバリ。
+  async function undoRow(i: number) {
+    const eventId = results[i]?.eventId;
+    setRegError(null);
+    setBusy(true);
+    try {
+      if (eventId) {
+        const res = await fetch("/api/calendar/delete-event", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ eventId })
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data?.error ?? "取り消しに失敗しました。");
+        }
+      }
+      setRegistered((prev) => prev.filter((x) => x !== i));
+      setResults((prev) => {
+        const next = { ...prev };
+        delete next[i];
+        return next;
+      });
+    } catch (err) {
+      setRegError(err instanceof Error ? err.message : "取り消しに失敗しました。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function finishAll() {
     if (!edits) return;
+    const targets = edits.map((e, i) => i).filter((i) => edits[i].include && edits[i].date && !registered.includes(i));
+    if (targets.length === 0) {
+      setRegError("登録対象がありません（「登録する」にチェックされ、日付のある予定が対象です）。");
+      return;
+    }
+    if (!window.confirm(`${targets.length}件の予定を Google カレンダーに登録します。よろしいですか？\n（登録後はこの画面の「取り消す」でいつでも削除できます）`)) {
+      return;
+    }
     setRegError(null);
     setBusy(true);
     const done: number[] = [...registered];
+    const res: Record<number, RegResult> = { ...results };
     try {
-      for (let i = 0; i < edits.length; i++) {
-        if (!edits[i].date || done.includes(i)) continue;
+      for (const i of targets) {
         try {
-          await registerRow(i);
+          res[i] = await registerRow(i);
           done.push(i);
         } catch (err) {
           setRegError(err instanceof Error ? err.message : "一部の予定の登録に失敗しました。");
         }
       }
+      setResults(res);
       setRegistered(done);
       if (done.length > 0) setScreen("done");
     } finally {
@@ -406,7 +453,16 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
   const rows = edits ?? [];
   const stepIndex = screen === "upload" || screen === "extracting" ? 0 : screen === "confirm" ? 1 : 2;
   const attention = rows.filter((e) => e.missingFields.length > 0).length;
-  const validCount = rows.filter((e) => e.date).length;
+  const pendingCount = rows.filter((e, i) => e.include && e.date && !registered.includes(i)).length;
+
+  function cancelConfirm() {
+    if (registered.length > 0) {
+      if (!window.confirm("登録済みの予定はカレンダーに残ります（取り消すには各予定の「取り消す」を使ってください）。アップロードに戻りますか？")) {
+        return;
+      }
+    }
+    reset("upload");
+  }
 
   // ---------- editable fields block (shared by form / split / compact-expanded) ----------
   function CalIcon() {
@@ -475,6 +531,67 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
         </Field>
       </div>
     );
+  }
+
+  // 「登録する」除外トグル（日付なし・登録済みは操作不可）。
+  function IncludeToggle({ e, i }: { e: EditState; i: number }) {
+    const isReg = registered.includes(i);
+    return (
+      <label
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 7,
+          fontSize: 12.5,
+          color: e.date && !isReg ? "#3c4043" : "#9aa0a6",
+          cursor: e.date && !isReg ? "pointer" : "default"
+        }}
+        title={e.date ? "一括登録に含めるかどうか" : "日付を入力すると登録対象になります"}
+      >
+        <input
+          type="checkbox"
+          checked={isReg ? true : e.include}
+          disabled={!e.date || isReg}
+          onChange={(ev) => updateField(i, "include", ev.target.checked)}
+          style={{ width: 15, height: 15, accentColor: A }}
+        />
+        登録する
+      </label>
+    );
+  }
+
+  // 1行ぶんの登録/取り消しアクション。
+  function RowActions({ e, i }: { e: EditState; i: number }) {
+    const isReg = registered.includes(i);
+    const link = results[i]?.htmlLink;
+    if (isReg) {
+      return (
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: "#188038" }}>✓ 登録済み</span>
+          {link ? (
+            <a href={link} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: A }}>
+              カレンダーで開く
+            </a>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => undoRow(i)}
+            disabled={busy}
+            style={{ background: "none", border: "none", color: "#d93025", fontSize: 12, cursor: "pointer", textDecoration: "underline", padding: 0 }}
+          >
+            取り消す
+          </button>
+        </div>
+      );
+    }
+    if (e.date) {
+      return (
+        <button type="button" onClick={() => registerOne(i)} disabled={busy} style={ghostBtn}>
+          この予定だけ追加
+        </button>
+      );
+    }
+    return <span style={{ fontSize: 12, color: "#d93025" }}>日付を入力すると登録できます</span>;
   }
 
   return (
@@ -957,9 +1074,16 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
           <div style={{ animation: "om-up .4s ease both" }}>
             <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 14, marginBottom: 6 }}>
               <div>
+                <button
+                  type="button"
+                  onClick={cancelConfirm}
+                  style={{ background: "none", border: "none", color: "#5f6368", fontSize: 12.5, cursor: "pointer", padding: 0, marginBottom: 8, display: "inline-flex", alignItems: "center", gap: 4 }}
+                >
+                  ← アップロードに戻る
+                </button>
                 <h2 style={{ margin: "0 0 4px", fontSize: 20, fontWeight: 700 }}>内容を確認・修正</h2>
                 <p style={{ margin: 0, fontSize: 13, color: "#5f6368" }}>
-                  {rows.length}件の予定が見つかりました{usedModel ? `（${usedModel}）` : ""}。タイトル・対象・通知を確認して登録します。
+                  {rows.length}件の予定が見つかりました{usedModel ? `（${usedModel}）` : ""}。登録したくない予定は「登録する」のチェックを外してください。
                 </p>
               </div>
               <div style={{ display: "inline-flex", gap: 3, padding: 3, background: "#eef1f4", borderRadius: 11 }}>
@@ -997,7 +1121,14 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
                   return (
                     <article
                       key={i}
-                      style={{ background: "#fff", border: `1px solid ${isReg ? "#ceead6" : "#e8eaed"}`, borderRadius: 16, boxShadow: "0 1px 3px rgba(60,64,67,.06)", overflow: "hidden" }}
+                      style={{
+                        background: "#fff",
+                        border: `1px solid ${isReg ? "#ceead6" : "#e8eaed"}`,
+                        borderRadius: 16,
+                        boxShadow: "0 1px 3px rgba(60,64,67,.06)",
+                        overflow: "hidden",
+                        opacity: !e.include && !isReg ? 0.55 : 1
+                      }}
                     >
                       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 20px", borderBottom: "1px solid #eceef1" }}>
                         <span style={audChip(audColor)}>{e.audience === "parent" ? "保護者のみ" : "家族全員"}</span>
@@ -1007,11 +1138,6 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
                           placeholder="タイトル"
                           style={{ flex: 1, minWidth: 0, fontSize: 16, fontWeight: 700, border: "none", outline: "none", background: "transparent", color: "#202124" }}
                         />
-                        {isReg ? (
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: "#188038", background: "#e6f4ea", padding: "5px 11px", borderRadius: 999, flexShrink: 0 }}>
-                            ✓ 登録済み
-                          </span>
-                        ) : null}
                       </div>
                       <div style={{ padding: "18px 20px" }}>
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: "14px 16px" }}>
@@ -1064,13 +1190,9 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
                           </Field>
                         </div>
 
-                        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
-                          {!isReg && e.date ? (
-                            <button type="button" onClick={() => registerOne(i)} disabled={busy} style={ghostBtn}>
-                              この予定だけ追加
-                            </button>
-                          ) : null}
-                          {!isReg && !e.date ? <span style={{ fontSize: 12, color: "#d93025" }}>日付を入力すると登録できます</span> : null}
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
+                          <IncludeToggle e={e} i={i} />
+                          <RowActions e={e} i={i} />
                         </div>
                       </div>
                     </article>
@@ -1177,12 +1299,9 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
                           </Field>
                           <NotifyPair e={e} i={i} />
                         </div>
-                        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
-                          {!registered.includes(i) && e.date ? (
-                            <button type="button" onClick={() => registerOne(i)} disabled={busy} style={ghostBtn}>
-                              この予定だけ追加
-                            </button>
-                          ) : null}
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
+                          <IncludeToggle e={e} i={i} />
+                          <RowActions e={e} i={i} />
                         </div>
                       </div>
                     </div>
@@ -1203,7 +1322,17 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
                   const rem = [notifyLabel(e.notify1), notifyLabel(e.notify2)].filter((l) => l !== "なし");
                   const isExpanded = i === expandedIdx;
                   return (
-                    <article key={i} style={{ background: "#fff", border: `1px solid ${isReg ? "#ceead6" : "#e8eaed"}`, borderRadius: 14, boxShadow: "0 1px 3px rgba(60,64,67,.06)", overflow: "hidden" }}>
+                    <article
+                      key={i}
+                      style={{
+                        background: "#fff",
+                        border: `1px solid ${isReg ? "#ceead6" : "#e8eaed"}`,
+                        borderRadius: 14,
+                        boxShadow: "0 1px 3px rgba(60,64,67,.06)",
+                        overflow: "hidden",
+                        opacity: !e.include && !isReg ? 0.55 : 1
+                      }}
+                    >
                       <div style={{ display: "flex", alignItems: "stretch" }}>
                         <div style={{ width: 6, background: audColor, flexShrink: 0 }} />
                         <div style={{ flex: 1, minWidth: 0, padding: "15px 16px" }}>
@@ -1235,17 +1364,16 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
                             </div>
                           ) : null}
 
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 13, paddingTop: 12, borderTop: "1px solid #eceef1" }}>
-                            <button type="button" onClick={() => setExpandedIdx(isExpanded ? -1 : i)} style={{ background: "none", border: "none", color: A, fontSize: 12.5, fontWeight: 600, cursor: "pointer", padding: "4px 0" }}>
-                              {isExpanded ? "× 閉じる" : "✎ この場で修正"}
-                            </button>
-                            {!isReg && e.date ? (
-                              <button type="button" onClick={() => registerOne(i)} disabled={busy} style={{ ...ghostBtn, padding: "6px 12px" }}>
-                                追加
+                          <div style={{ marginTop: 13, paddingTop: 12, borderTop: "1px solid #eceef1", display: "flex", flexDirection: "column", gap: 10 }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                              <button type="button" onClick={() => setExpandedIdx(isExpanded ? -1 : i)} style={{ background: "none", border: "none", color: A, fontSize: 12.5, fontWeight: 600, cursor: "pointer", padding: "4px 0" }}>
+                                {isExpanded ? "× 閉じる" : "✎ この場で修正"}
                               </button>
-                            ) : isReg ? (
-                              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, color: "#188038" }}>✓ 登録済み</span>
-                            ) : null}
+                              <IncludeToggle e={e} i={i} />
+                            </div>
+                            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                              <RowActions e={e} i={i} />
+                            </div>
                           </div>
 
                           {isExpanded ? (
@@ -1279,14 +1407,15 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
             {/* confirm footer */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 14, marginTop: 26, padding: "18px 20px", background: "#fff", border: "1px solid #e8eaed", borderRadius: 14, boxShadow: "0 1px 3px rgba(60,64,67,.06)" }}>
               <div style={{ fontSize: 13, color: "#5f6368", lineHeight: 1.6 }}>
-                <strong style={{ color: "#202124" }}>
-                  {registered.length}/{rows.length}
-                </strong>{" "}
-                件を登録予定 · 参加者は対象（保護者/家族）に応じて自動付与されます
+                登録対象 <strong style={{ color: "#202124" }}>{pendingCount}件</strong>
+                {registered.length > 0 ? ` ・ 登録済み ${registered.length}件` : ""} · 参加者は対象（保護者/家族）に応じて自動付与
+                <span style={{ display: "block", fontSize: 11.5, color: "#9aa0a6", marginTop: 2 }}>
+                  登録後も各予定の「取り消す」でカレンダーから削除できます。
+                </span>
                 {regError ? <span style={{ display: "block", color: "#c5221f", marginTop: 4 }}>{regError}</span> : null}
               </div>
-              <button type="button" onClick={finishAll} disabled={!validCount || busy} style={validCount && !busy ? primaryBtn : disabledBtn}>
-                {busy ? "登録中…" : "Google カレンダーに登録して完了"}
+              <button type="button" onClick={finishAll} disabled={!pendingCount || busy} style={pendingCount && !busy ? primaryBtn : disabledBtn}>
+                {busy ? "登録中…" : `登録対象 ${pendingCount}件をカレンダーに登録`}
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                   <path d="M3 8h10M9 4l4 4-4 4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
@@ -1319,6 +1448,7 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
                   const dateDisp = fmtDate(e.date) || "日付未設定";
                   const timeDisp = e.allDay ? "終日" : e.startTime || "時刻未設定";
                   const rem = [notifyLabel(e.notify1), notifyLabel(e.notify2)].filter((l) => l !== "なし");
+                  const link = results[i]?.htmlLink;
                   return (
                     <div key={i} style={{ display: "flex", alignItems: "stretch", background: "#fff", border: "1px solid #e8eaed", borderRadius: 13, overflow: "hidden", boxShadow: "0 1px 3px rgba(60,64,67,.06)" }}>
                       <div style={{ width: 6, background: audColor, flexShrink: 0 }} />
@@ -1334,11 +1464,31 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
                           <span style={{ background: "#f1f3f4", padding: "3px 9px", borderRadius: 6 }}>👥 {resolved(e).join(", ") || "—"}</span>
                           <span style={{ background: "#f1f3f4", padding: "3px 9px", borderRadius: 6 }}>🔔 {rem.length ? rem.join("・") : "なし"}</span>
                         </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10, paddingTop: 10, borderTop: "1px solid #eceef1" }}>
+                          {link ? (
+                            <a href={link} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: A, fontWeight: 600 }}>
+                              カレンダーで開く
+                            </a>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => undoRow(i)}
+                            disabled={busy}
+                            style={{ background: "none", border: "none", color: "#d93025", fontSize: 12, cursor: "pointer", textDecoration: "underline", padding: 0 }}
+                          >
+                            取り消す（カレンダーから削除）
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
                 })}
             </div>
+
+            {regError ? <p style={{ color: "#c5221f", fontSize: 13, textAlign: "center", marginTop: 14 }}>{regError}</p> : null}
+            {registered.length === 0 ? (
+              <p style={{ color: "#5f6368", fontSize: 13, textAlign: "center", marginTop: 14 }}>登録した予定はすべて取り消されました。</p>
+            ) : null}
 
             <div style={{ display: "flex", justifyContent: "center", gap: 12, marginTop: 30 }}>
               <button type="button" onClick={() => reset("upload")} style={primaryBtn}>
