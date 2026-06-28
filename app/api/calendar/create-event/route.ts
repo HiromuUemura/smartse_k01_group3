@@ -78,6 +78,12 @@ function buildCalendarEvent(candidate: ScheduleCandidate) {
     description: descriptionParts.join("\n")
   };
 
+  // 場所（Google Calendar の location フィールド）。
+  const location = candidate.location?.trim();
+  if (location) {
+    event.location = location;
+  }
+
   if (candidate.startTime) {
     const endTime = candidate.endTime ?? addMinutesToTime(candidate.startTime, 60);
     event.start = {
