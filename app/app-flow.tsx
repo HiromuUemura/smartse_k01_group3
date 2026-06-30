@@ -95,7 +95,7 @@ function toEditState(c: ScheduleCandidate): EditState {
   };
 }
 
-type RegResult = { eventId?: string; htmlLink?: string };
+type RegResult = { eventId?: string; htmlLink?: string; todoCount?: number };
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -283,7 +283,30 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
     if (!res.ok) {
       throw new Error(data?.error ?? "登録に失敗しました。");
     }
-    return { eventId: data?.eventId, htmlLink: data?.htmlLink };
+    let todoCount = 0;
+    if (candidate.items.length > 0) {
+      try {
+        const todoRes = await fetch("/api/todo/create-todo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ candidate })
+        });
+        if (todoRes.ok) {
+          const todoData = await todoRes.json().catch(() => ({}));
+          todoCount = todoData?.count ?? 0;
+        }
+      } catch {
+        // best-effort: Todo失敗はカレンダー登録成功に影響しない
+      }
+      // try {
+      //   const listsRes = await fetch("/api/todo/create-todo");
+      //   const { lists } = await listsRes.json().catch(() => ({ lists: [] }));
+      //   console.log("tasklistIds:", (lists as Array<{ id: string; title: string }>).map((l) => ({ id: l.id, title: l.title })));
+      // } catch {
+      //   // listId取得失敗は無視
+      // }
+    }
+    return { eventId: data?.eventId, htmlLink: data?.htmlLink, todoCount };
   }
 
   async function registerOne(i: number) {
@@ -337,7 +360,13 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
       setRegError("登録対象がありません（「登録する」にチェックされ、日付のある予定が対象です）。");
       return;
     }
-    if (!window.confirm(`${targets.length}件の予定を Google カレンダーに登録します。よろしいですか？\n（登録後はこの画面の「取り消す」でいつでも削除できます）`)) {
+    const todoTargets = targets.filter((i) =>
+      edits[i].itemsText.split(",").map((s) => s.trim()).filter(Boolean).length > 0
+    );
+    const todoMsg = todoTargets.length > 0
+      ? `\nまた、持ち物がある ${todoTargets.length} 件は Google ToDo にもタスクを登録します。`
+      : "";
+    if (!window.confirm(`${targets.length}件の予定を Google カレンダーに登録します。よろしいですか？${todoMsg}\n（登録後はこの画面の「取り消す」でいつでも削除できます）`)) {
       return;
     }
     setRegError(null);
@@ -1165,7 +1194,12 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
                             <input value={e.location} onChange={(ev) => updateField(i, "location", ev.target.value)} placeholder="場所" style={fieldStyle(e, "location")} />
                           </Field>
                           <Field label="持ち物">
-                            <input value={e.itemsText} onChange={(ev) => updateField(i, "itemsText", ev.target.value)} placeholder="カンマ区切り" style={INP} />
+                            <>
+                              <input value={e.itemsText} onChange={(ev) => updateField(i, "itemsText", ev.target.value)} placeholder="カンマ区切り" style={INP} />
+                              {e.itemsText.trim() ? (
+                                <span style={{ fontSize: 11, color: "#1a73e8" }}>📋 各項目を Google ToDo にタスク登録します</span>
+                              ) : null}
+                            </>
                           </Field>
                           <Field label="締切（提出など）">
                             <input type="date" value={e.deadline} onChange={(ev) => updateField(i, "deadline", ev.target.value)} style={INP} />
@@ -1305,7 +1339,12 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
                             <input value={e.location} onChange={(ev) => updateField(i, "location", ev.target.value)} placeholder="場所" style={fieldStyle(e, "location")} />
                           </Field>
                           <Field label="持ち物">
-                            <input value={e.itemsText} onChange={(ev) => updateField(i, "itemsText", ev.target.value)} placeholder="カンマ区切り" style={INP} />
+                            <>
+                              <input value={e.itemsText} onChange={(ev) => updateField(i, "itemsText", ev.target.value)} placeholder="カンマ区切り" style={INP} />
+                              {e.itemsText.trim() ? (
+                                <span style={{ fontSize: 11, color: "#1a73e8" }}>📋 各項目を Google ToDo にタスク登録します</span>
+                              ) : null}
+                            </>
                           </Field>
                           <Field label="締切（提出など）">
                             <input type="date" value={e.deadline} onChange={(ev) => updateField(i, "deadline", ev.target.value)} style={INP} />
@@ -1381,6 +1420,9 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
 
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
                             {e.location ? <span style={{ fontSize: 11.5, color: "#3c4043", background: "#f1f3f4", padding: "4px 9px", borderRadius: 7 }}>📍 {e.location}</span> : null}
+                            {itemsArr.length > 0 ? (
+                              <span style={{ fontSize: 11.5, color: "#1a73e8", background: "#e8f0fe", padding: "4px 9px", borderRadius: 7, fontWeight: 600 }}>📋 ToDo {itemsArr.length}件</span>
+                            ) : null}
                             {itemsArr.map((it, k) => (
                               <span key={k} style={{ fontSize: 11.5, color: "#3c4043", background: "#f1f3f4", padding: "4px 9px", borderRadius: 7 }}>{it}</span>
                             ))}

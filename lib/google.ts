@@ -1,7 +1,10 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-export const GOOGLE_SCOPES = ["https://www.googleapis.com/auth/calendar.events"];
+export const GOOGLE_SCOPES = [
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/tasks"
+];
 
 const ACCESS_TOKEN_COOKIE = "google_access_token";
 const REFRESH_TOKEN_COOKIE = "google_refresh_token";
