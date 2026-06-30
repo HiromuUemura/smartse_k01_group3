@@ -298,13 +298,6 @@ export default function AppFlow({ isSignedIn, hasKey, currentModel, parentAttend
       } catch {
         // best-effort: Todo失敗はカレンダー登録成功に影響しない
       }
-      // try {
-      //   const listsRes = await fetch("/api/todo/create-todo");
-      //   const { lists } = await listsRes.json().catch(() => ({ lists: [] }));
-      //   console.log("tasklistIds:", (lists as Array<{ id: string; title: string }>).map((l) => ({ id: l.id, title: l.title })));
-      // } catch {
-      //   // listId取得失敗は無視
-      // }
     }
     return { eventId: data?.eventId, htmlLink: data?.htmlLink, todoCount };
   }
